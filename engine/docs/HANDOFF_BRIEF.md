@@ -168,7 +168,7 @@ models = era5   timezone = UTC   years = 2015–2023
 ### The data gap that defines the project
 
 **No public electrical load data exists for any polar research station.** Load is therefore
-synthetic — built bottom-up from physics, never drawn — and we say so before being asked.
+modelled — built bottom-up from physics, never drawn — and we say so before being asked.
 Proxies available for shape calibration if wanted:
 
 - Building Data Genome Project 2 — `https://github.com/buds-lab/building-data-genome-project-2`
@@ -553,7 +553,7 @@ single VM.
    no warm start), symmetry breaking, coarser resolution beyond hour 24, or a rolling LP with
    integer variables only in the first 12 hours?
 9. **Validation without ground truth.** What is the strongest defensible validation protocol for
-   a synthetic twin in this setting, beyond "three qualitative signals emerge that we did not
+   a modelled twin in this setting, beyond "three qualitative signals emerge that we did not
    fit"?
 10. **The pitch.** Given §1 (one-sentence PS, non-specialist panel, five minutes), is
     "fuel survivability + science integrity" the right lead, or is there a stronger framing we

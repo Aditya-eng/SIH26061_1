@@ -1,3 +1,15 @@
+# Connected Run Simulation update
+
+Run Simulation now uses 24-hour backend LightGBM quantile forecasts, executes
+the current measured hour, and replans hourly. Reserve follows forecast spread,
+clean-air penalties follow forecast wind, and the MILP enforces a hard tank limit
+plus generator runtime/downtime history. Models are loaded once; forecast inputs are
+cached ERA5 degraded with lead time. Missing artifacts use labeled statistical forecasts.
+The browser reserve selector controls only the retained fallback. Python/browser
+fuel differences are not controller savings. The initial saved example remains
+browser-generated; the historical guide below describes that retained browser model.
+Full implementation/API notes: engine/docs/CONNECTED_MPC.md in the repository.
+
 # Pink Monster — Build & Demo Guide
 
 **Project:** Fuel-survivability energy management for polar research stations

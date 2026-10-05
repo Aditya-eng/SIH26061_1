@@ -21,6 +21,8 @@ for the oracle baseline.
 from __future__ import annotations
 
 import warnings
+import json
+from pathlib import Path
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -196,11 +198,38 @@ class QuantileForecaster:
                     subsample_freq=1,
                     colsample_bytree=0.85,
                     verbose=-1,
+                    n_jobs=4,
+                    random_state=int(self.cfg["simulation.seed"]),
                 )
                 model.fit(X, Y[tgt])
                 self.models[(tgt, qname)] = model
         self.train_report = {"n_rows": int(len(X)), "n_features": len(self.feature_names)}
         return self
+
+    def save(self, directory: Path, metadata: dict | None = None) -> None:
+        """Persist native model text and JSON; loading never executes pickled code."""
+        directory.mkdir(parents=True, exist_ok=True)
+        for (target, q), model in self.models.items():
+            model.booster_.save_model(str(directory / f"{target}_{q}.txt"))
+        manifest = {"schema": 1, "feature_names": self.feature_names,
+                    "fallback_spread": self.fallback_spread,
+                    "train_report": self.train_report, "metadata": metadata or {},
+                    "models": [f"{t}_{q}" for t, q in self.models]}
+        (directory / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    @classmethod
+    def load(cls, cfg: Config, directory: Path) -> "QuantileForecaster":
+        manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+        if manifest["schema"] != 1:
+            raise ValueError("Unsupported forecast artifact schema")
+        fc = cls(cfg, feature_names=manifest["feature_names"],
+                 fallback_spread=manifest["fallback_spread"], train_report=manifest["train_report"])
+        if not HAS_LGB or len(manifest["models"]) != len(TARGETS) * len(QUANTILES):
+            raise ValueError("Complete LightGBM artifacts and runtime are required")
+        for tgt in TARGETS:
+            for q in QUANTILES:
+                fc.models[(tgt, q)] = lgb.Booster(model_file=str(directory / f"{tgt}_{q}.txt"))
+        return fc
 
     # ---------------- inference ----------------
     def predict(
@@ -223,7 +252,9 @@ class QuantileForecaster:
         for tgt in TARGETS:
             if HAS_LGB and (tgt, "p50") in self.models:
                 for qname in QUANTILES:
-                    out[f"{tgt}_{qname}"] = self.models[(tgt, qname)].predict(X)
+                    # Tiny online batches are faster without an OpenMP thread team.
+                    out[f"{tgt}_{qname}"] = self.models[(tgt, qname)].predict(
+                        X, num_threads=int(self.cfg.get("forecast.inference_threads", 1)))
             else:  # persistence + climatological spread
                 base = last_actual[f"{tgt}_24h"]
                 spread = self.fallback_spread.get(tgt, 1.0) * np.sqrt(

@@ -26,6 +26,7 @@ class State:
     fuel_remaining_l: float
     fuel_spent_l: float = 0.0
     gen_on: list[int] = field(default_factory=list)
+    gen_state_hours: list[int] | None = None
 
 
 @dataclass
@@ -142,6 +143,9 @@ def resolve_hour(
     state.soc_kwh = float(np.clip(new_soc, soc_lo, soc_hi))
     state.fuel_remaining_l = max(state.fuel_remaining_l - burn, 0.0)
     state.fuel_spent_l += burn
+    elapsed = state.gen_state_hours or [g["min_up_h"] if running else g["min_down_h"]
+                                      for g, running in zip(gens, state.gen_on)]
+    state.gen_state_hours = [elapsed[g] + 1 if int(on[g]) == state.gen_on[g] else 1 for g in range(len(gens))]
     state.gen_on = [int(x) for x in on]
 
     record = {

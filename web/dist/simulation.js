@@ -91,4 +91,4 @@ export function simulate(config,progress=()=>{}){const c=validateConfig(config),
   if(h%24===0)progress({controller,hour:h,total:c.days*24});
  }runs.push({controller,rows,summary:summarize(rows,c)});}
  return {modelVersion:MODEL_VERSION,createdAt:new Date().toISOString(),source:STATION.source,config:c,event:eventWindow(c),runs};}
-export function csvFor(run){const keys=Object.keys(run.runs[0].rows[0]);const q=v=>`"${String(v??'').replaceAll('"','""')}"`;return [keys.map(q).join(','),...run.runs.flatMap(r=>r.rows.map(row=>keys.map(k=>q(row[k])).join(',')))].join('\n');}
+export function csvFor(run){const rows=run.runs.flatMap(r=>r.rows),keys=[...new Set(rows.flatMap(r=>Object.keys(r)))];const q=v=>`"${(Array.isArray(v)?JSON.stringify(v):String(v??'')).replaceAll('"','""')}"`;return [keys.map(q).join(','),...rows.map(row=>keys.map(k=>q(row[k])).join(','))].join('\n');}

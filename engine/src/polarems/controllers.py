@@ -239,6 +239,7 @@ class MPCController(Controller):
             soc0_kwh=ctx.state.soc_kwh,
             gen_on0=list(ctx.state.gen_on),
             fuel_remaining_l=ctx.state.fuel_remaining_l,
+            gen_state_hours0=ctx.state.gen_state_hours,
         )
         res = solve_dispatch(inp, ctx.cfg, ctx.gens)
 

@@ -173,7 +173,7 @@
   <section id="tab-assumptions">
     <div class="card">
       <h2>Assumptions</h2>
-      <p class="note">Every physical parameter, its value, its source and its confidence. No public electrical load data exists for any polar research station: the load here is synthetic, built bottom-up from headcount and outdoor temperature, and the rows marked ASSUMPTION are where that shows.</p>
+      <p class="note">Every physical parameter, its value, its source and its confidence. No public electrical load data exists for any polar research station: the load here is modelled, built bottom-up from headcount and outdoor temperature, and the rows marked ASSUMPTION are where that shows.</p>
       <div class="controls">
         <button id="filterAll" class="primary">All parameters</button>
         <button id="filterAssume">Assumptions only</button>
@@ -218,7 +218,7 @@ el("pills").innerHTML = [
   `theme: ${meta.theme_portal}`
 ].map(t => `<span class="pill">${t}</span>`).join("");
 el("footer").innerHTML = `Generated ${meta.generated_at}. Weather: ERA5 reanalysis at the station grid point. `
-  + `Electrical load: synthetic, bottom-up, documented in the Assumptions tab. `
+  + `Electrical load: modelled bottom-up, documented in the Assumptions tab. `
   + `Official problem statement text: "${meta.official_description}"`;
 
 /* ---------- tabs ---------- */
