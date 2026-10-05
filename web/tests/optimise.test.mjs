@@ -45,7 +45,7 @@ test('live API: full 30-day Run Simulation mapping and exports',{skip:!base},asy
  const result=await (await fetch(base+'/api/optimise',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(q)})).json();
  assert.equal(rowsFromResponse(defaults,ws,state,result,q).length,1);
  assert.equal(rowsFromResponse(defaults,ws,state,{...result,status:'Feasible'},q).length,1);
- assert.equal(run.solves.length,720);assert.ok(run.solves.every(s=>s.executed===1&&s.horizon<=36));
+ assert.ok(run.solves.length<=720);assert.ok(run.solves.every(s=>s.executed>=1&&s.executed<=6&&s.horizon<=36));
  assert.ok(run.runs[1].rows.some(r=>r.cleanAirSensitive&&r.cleanAirPenalty>0));
  assert.ok(run.runs[1].rows.every(r=>r.generatorStateHours?.length===2&&r.forecastMethod==='lightgbm-quantile'));
  assert.throws(()=>rowsFromResponse(defaults,ws,state,{...result,status:'Infeasible'},q),/MILP returned/);

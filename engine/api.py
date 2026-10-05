@@ -33,6 +33,8 @@ app.add_middleware(
         "https://aditya-eng.github.io",
     ],
     allow_credentials=False,
+    # lets the public github.io page reach a backend on this machine (Chrome private-network preflight)
+    allow_private_network=True,
     allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:[0-9]+)?",
     allow_methods=["*"],
     allow_headers=["*"],

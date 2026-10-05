@@ -87,6 +87,54 @@ export function rowsFromResponse(c, ws, state, result, request, take=request.for
   });
 }
 
+// Fuel curves the backend uses for the web console (engine/config/connected.json): L/h = A·on + B·P.
+const FUEL_A = [3.5, 2.1], FUEL_B = [.25, .24];
+// Re-plan interval: the engine's own 6-hour control step. A generator fault or restoration still
+// forces an immediate re-plan, because availability changes end a request horizon.
+export const PLAN_STEP = Math.min(24, Math.max(1, Math.round(Number(globalThis.location?.search ? new URLSearchParams(globalThis.location.search).get('step') : 0) || 6)));
+
+// Carry out hour t of a backend plan on the measured hour w: keep the plan's generator commitment
+// and setpoint, let the battery and units absorb the forecast error within their limits, then shed
+// domestic, essential and critical demand in that order or curtail any surplus.
+export function executePlanned(c, w, last, result, t) {
+  const Emin = c.battery * .15, Emax = c.battery * .95, F0 = last.fuelRemaining;
+  const load = [w.critical, w.essential, w.domestic], share = load.reduce((a, b) => a + b, 0);
+  const tiers = load.map(v => share ? w.load * v / share : 0); if (!share) tiers[0] = w.load;
+  const on = [0, 1].map(g => result.generator.on[g][t] && (g || w.largeAvailable) ? 1 : 0);
+  // a committed unit must be able to run the hour at minimum load on the fuel left (larger unit drops first)
+  for (const g of [0, 1]) if (on.reduce((s, o, k) => s + o * (FUEL_A[k] + FUEL_B[k] * .3 * RATINGS[k]), 0) > F0 + 1e-9) on[g] = 0;
+  const lo = on.map((o, g) => o * .3 * RATINGS[g]), hi = on.map((o, g) => o * RATINGS[g]);
+  const P = on.map((o, g) => o ? Math.min(hi[g], Math.max(lo[g], result.generator.power_kw[g][t])) : 0);
+  const dmax = Math.min(c.batteryPower, Math.max(0, (last.energy - Emin) * ETA)), cmax = Math.min(c.batteryPower, Math.max(0, (Emax - last.energy) / ETA));
+  let need = w.load - w.pv - w.wind - P[0] - P[1], dis = 0, ch = 0;
+  if (need > 0) { dis = Math.min(need, dmax); need -= dis; for (const g of [1, 0]) { const add = Math.min(need, hi[g] - P[g]); P[g] += add; need -= add; } }
+  else { ch = Math.min(-need, cmax); need += ch; for (const g of [0, 1]) { const cut = Math.min(-need, P[g] - lo[g]); P[g] -= cut; need += cut; } }
+  // the tank is a hard limit: trim output toward minimum load until the hour's burn fits
+  let excess = on.reduce((s, o, g) => s + o * FUEL_A[g] + FUEL_B[g] * P[g], 0) - F0;
+  for (const g of [0, 1]) if (excess > 1e-9) { const cut = Math.min(P[g] - lo[g], excess / FUEL_B[g]); P[g] -= cut; excess -= cut * FUEL_B[g]; need += cut; }
+  if (need > 0) { const back = Math.min(need, ch); ch -= back; need -= back; const more = Math.min(need, dmax - dis); dis += more; need -= more; }
+  const unserved = Math.max(0, need), curtailed = Math.max(0, -need);
+  let left = unserved; const shed = [2, 1, 0].map(k => { const s = Math.min(left, tiers[k]); left -= s; return [k, s]; }).sort((a, b) => a[0] - b[0]).map(x => x[1]);
+  const generatorPower = P[0] + P[1], fuelUsed = Math.min(F0, on.reduce((s, o, g) => s + o * FUEL_A[g] + FUEL_B[g] * P[g], 0));
+  const energy = last.energy + ETA * ch - dis / ETA, fuel = F0 - fuelUsed;
+  const hours = on.map((o, g) => o === last.generatorOn[g] ? (last.generatorStateHours?.[g] ?? 0) + 1 : 1);
+  const f = (target, q) => result.forecast?.[target]?.[q]?.[t];
+  return {hour: w.hour, load: w.load, criticalLoad: tiers[0], essentialLoad: tiers[1], domesticLoad: tiers[2], pv: w.pv, wind: w.wind, temperature: w.temperature,
+    generator: RATINGS.reduce((a, v, g) => a + v * on[g], 0), generatorPower, generatorPowerByUnit: P, generatorOn: on, generatorStarts: on.map((o, g) => o && !last.generatorOn[g] ? 1 : 0),
+    generatorStateHours: hours, batteryPower: dis - ch, batteryCharge: ch, batteryDischarge: dis, energy, soc: c.battery ? energy / c.battery * 100 : 0,
+    fuelUsed, fuelRemaining: Math.max(0, fuel), unserved, criticalUnserved: shed[0], essentialUnserved: shed[1], domesticUnserved: shed[2], deferrableUnserved: 0, sheddableUnserved: shed[2], curtailed,
+    losses: ch * (1 - ETA) + dis * (1 / ETA - 1), disruption: w.disruption, largeAvailable: w.largeAvailable, controller: 'Python MILP', replanned: false, protected: false,
+    forecastExpected: f('renewable_kw', 'p50') ?? w.pv + w.wind, forecastLow: f('renewable_kw', 'p10') ?? w.pv + w.wind, forecastHigh: f('renewable_kw', 'p90') ?? w.pv + w.wind,
+    forecastLoad: f('load_kw', 'p50') ?? w.load, forecastErrorRenewable: result.forecast ? w.pv + w.wind - f('renewable_kw', 'p50') : null,
+    forecastErrorLoad: result.forecast ? w.load - f('load_kw', 'p50') : null, forecastMethod: result.forecast_metadata?.method,
+    reserveReq: result.reserve?.required_kw[t] ?? 0, reserveShortfall: result.reserve?.shortfall_kw[t] ?? 0, reserveEnergy: 0,
+    cleanAirSensitive: result.clean_air?.sensitive[t] ?? false, cleanAirPenalty: result.clean_air?.penalty_l_per_gen_h[t] ?? 0,
+    dieselDiscouraged: result.clean_air?.diesel_discouraged[t] ?? false, dieselAvoided: (result.clean_air?.sensitive[t] ?? false) && !generatorPower,
+    emergencyHistoryOverride: false,
+    budgetRemaining: c.fuel * (w.hour + 1) / (c.days * 24) - (c.fuel - fuel), dailyAllowance: F0 / Math.max(1, (c.days * 24 - w.hour) / 24),
+    reason: `Carries out the Python MILP plan made ${t} h earlier on measured conditions; the plan is refreshed every ${PLAN_STEP} h. ${unserved > 1e-6 ? 'Available resources leave unmet demand.' : generatorPower ? 'Diesel, renewables and battery meet demand.' : 'Renewables and battery meet demand.'}`};
+}
+
 async function apiJson(path, body, {base, fetchImpl, signal, timeoutMs}) {
   signal?.throwIfAborted();
   let response;
@@ -123,7 +171,10 @@ export async function optimiseMission(config, baseline, progress=()=>{}, options
       else if(diesel)diesel=false;
       else throw Error('Backend consumed fuel with diesel disabled.');
     }
-    const chunk=rowsFromResponse(c,ws.slice(h,h+n),state,result,request);rows.push(...chunk);
+    const chunk=rowsFromResponse(c,ws.slice(h,h+n),state,result,request);
+    // Connected mode solves hour 0 on measurements; the rest of the step follows the plan on measured hours.
+    if(request.forecast)for(let t=1;t<Math.min(opts.step||PLAN_STEP,n);t++)chunk.push(executePlanned(c,ws[h+t],chunk.at(-1),result,t));
+    rows.push(...chunk);
     solves.push({hour:h,horizon:n,executed:chunk.length,status:result.status,solver:result.solver,solveTime:result.solve_time_s,objective:result.objective,overBudget:result.fuel.over_budget_l,
       forecast:result.forecast,forecastMetadata:result.forecast_metadata,reserve:result.reserve,cleanAir:result.clean_air,optimizerInputs:result.optimizer_inputs});
     for(const w of ws.slice(h,h+chunk.length))history.push({time:timeAt(w.hour),load_kw:w.load,pv_kw:w.pv,wind_kw:w.wind});
@@ -131,6 +182,6 @@ export async function optimiseMission(config, baseline, progress=()=>{}, options
     const last=chunk.at(-1);state={energy:last.energy,fuel:last.fuelRemaining,on:last.generatorOn,hours:last.generatorStateHours,history};h+=chunk.length;
   }
   return {modelVersion:MODEL_VERSION,createdAt:new Date().toISOString(),source:DATA_SOURCE,config:c,event:eventWindow(c),execution:'python-milp',api:opts.base,
-    method:connected?`${health.default_horizon_h||24}-hour quantile forecast MPC (backend supports up to ${health.max_horizon_h||36} h), hourly measured execution; uncertainty reserve; soft clean-air penalty; hard tank + soft seasonal allowance; elapsed generator state carried. Forecast inputs: ERA5 degraded with lead time, not live telemetry.`:'Legacy client-series MILP with defensive fuel repair.',solves,
+    method:connected?`${health.default_horizon_h||24}-hour quantile forecast MPC (backend supports up to ${health.max_horizon_h||36} h), ${opts.step||PLAN_STEP}-hour re-plan step executed on measured hours; uncertainty reserve; soft clean-air penalty; hard tank + soft seasonal allowance; elapsed generator state carried. Forecast inputs: ERA5 degraded with lead time, not live telemetry.`:'Legacy client-series MILP with defensive fuel repair.',solves,
     runs:[baseline,{controller:'Python MILP',rows,summary:summarize(rows,c)}]};
 }
